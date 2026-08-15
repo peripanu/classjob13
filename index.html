@@ -4,6 +4,12 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>우리 반 1인 1역 도장판</title>
+    <meta name="description" content="학생이 자신의 1인 1역을 확인하고 수행 기록을 남기는 학급용 도장판입니다.">
+    <meta property="og:title" content="우리 반 1인 1역 도장판">
+    <meta property="og:description" content="오늘의 학급 역할을 확인하고 수행 도장을 찍어요.">
+    <meta property="og:type" content="website">
+    <!-- GitHub Pages에서는 응답 헤더를 직접 설정할 수 없어, 브라우저가 지원하는 범위에서만 보완합니다. -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.tailwindcss.com https://unpkg.com https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; connect-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'self'; form-action 'self'">
 
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
@@ -117,7 +123,9 @@
             const [loggedInStudentId, setLoggedInStudentId] = React.useState(null);
             
             const [teacherPin, setTeacherPin] = React.useState(() => {
-                return localStorage.getItem('class_teacher_pin_v3') || '1234';
+                const savedPin = localStorage.getItem('class_teacher_pin_v3');
+                // 이전 버전의 공개 기본값은 관리자 비밀번호로 쓰지 않습니다.
+                return savedPin === '1234' ? '' : (savedPin || '');
             });
 
             const [hideTeacherBtn, setHideTeacherBtn] = React.useState(() => {
@@ -151,6 +159,7 @@
             const [currentDate, setCurrentDate] = React.useState(getTodayStr());
             const [toastMessage, setToastMessage] = React.useState('');
             const [alertModal, setAlertModal] = React.useState({ show: false, message: '' });
+            const [showPrivacyModal, setShowPrivacyModal] = React.useState(false);
 
             React.useEffect(() => {
                 localStorage.setItem('class_teacher_pin_v3', teacherPin);
@@ -227,6 +236,18 @@
             };
 
             const verifyTeacherPin = () => {
+                if (!teacherPin) {
+                    if (teacherPinInput.length < 8) {
+                        showAlert('처음 설정하는 교사 비밀번호는 8자 이상으로 입력해 주세요. 학생에게 링크를 공유하기 전에 교사가 먼저 설정해야 합니다.');
+                        return;
+                    }
+                    setTeacherPin(teacherPinInput);
+                    setShowTeacherPinModal(false);
+                    setTeacherPinInput('');
+                    setMode('teacher');
+                    showToast('🔐 교사 비밀번호가 설정되었습니다.');
+                    return;
+                }
                 if (teacherPinInput === teacherPin) {
                     setShowTeacherPinModal(false);
                     setTeacherPinInput('');
@@ -305,6 +326,28 @@
                         </div>
                     )}
 
+                    {showPrivacyModal && (
+                        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="privacy-title">
+                            <div className="bg-white rounded-3xl p-6 w-full max-w-lg shadow-2xl max-h-[85vh] overflow-y-auto">
+                                <div className="flex items-start justify-between gap-4 mb-4">
+                                    <div>
+                                        <h2 id="privacy-title" className="text-lg font-bold text-slate-800">개인정보처리방침</h2>
+                                        <p className="text-xs text-slate-500 mt-1">시행일: 2026년 8월 15일</p>
+                                    </div>
+                                    <button onClick={() => setShowPrivacyModal(false)} className="text-slate-500 hover:text-slate-800" aria-label="개인정보처리방침 닫기">✕</button>
+                                </div>
+                                <div className="space-y-4 text-xs leading-relaxed text-slate-600">
+                                    <p><b>1. 무엇을 저장하나요?</b><br />이 앱은 학생의 이름을 입력받지 않습니다. 학급 운영을 위해 학생 번호, 선택한 아바타, 역할, 학생·교사 비밀번호, 역할 수행 여부와 날짜를 이 기기의 브라우저 저장소(localStorage)에 저장합니다.</p>
+                                    <p><b>2. 왜, 얼마나 오래 저장하나요?</b><br />역할 배정·수행 확인과 교사 관리 기능을 제공하기 위해서만 사용합니다. 데이터는 교사가 학생·기록을 삭제하거나 이 브라우저의 사이트 데이터를 지울 때까지 해당 기기에 남습니다.</p>
+                                    <p><b>3. 외부 전송과 제공</b><br />앱의 학생 번호·수행 기록은 별도 서버나 AI 서비스로 전송하지 않으며, 제3자에게 제공하지 않습니다. 다만 화면을 표시하기 위해 Google Fonts 및 Tailwind·React 등 공개 CDN에 연결될 수 있고, 이 과정에서 접속 기기의 IP 주소 등 통신 정보는 각 제공자의 정책에 따라 처리될 수 있습니다.</p>
+                                    <p><b>4. 안전하게 사용하기</b><br />공용 기기에서는 사용 후 브라우저를 종료하고, 교사는 충분히 긴 관리자 비밀번호를 사용하세요. 이 앱의 비밀번호와 기록은 브라우저에만 저장되므로 다른 사람이 같은 브라우저 프로필을 쓰지 않도록 관리해야 합니다.</p>
+                                    <p><b>5. 열람·정정·삭제</b><br />교사는 관리자 화면에서 학생과 역할을 수정·삭제하고, 수행 기록을 바꿀 수 있습니다. 전체 삭제는 브라우저 설정에서 이 사이트의 저장 데이터를 지우면 됩니다. 학생 또는 보호자는 담임교사에게 요청할 수 있습니다.</p>
+                                    <p><b>6. 아동 보호와 문의</b><br />14세 미만 학생의 정보를 필요 이상 입력하지 마세요. 개인정보 관련 문의와 삭제 요청은 이 앱을 운영하는 담임교사 또는 학교 개인정보 보호책임자에게 해 주세요.</p>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
                     {/* Teacher PIN Modal */}
                     {showTeacherPinModal && (
                         <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
@@ -313,16 +356,16 @@
                                     <div className="w-12 h-12 bg-amber-100 text-amber-600 rounded-2xl flex items-center justify-center mx-auto mb-2 text-xl">
                                         <i className="fa-solid fa-lock"></i>
                                     </div>
-                                    <h3 className="text-lg font-bold text-slate-800">교사 관리자 비밀번호</h3>
-                                    <p className="text-xs text-slate-500 mt-1">비밀번호를 입력하여 관리 모드로 진입합니다.</p>
+                                    <h3 className="text-lg font-bold text-slate-800">{teacherPin ? '교사 관리자 비밀번호' : '교사 비밀번호 처음 설정'}</h3>
+                                    <p className="text-xs text-slate-500 mt-1">{teacherPin ? '비밀번호를 입력하여 관리 모드로 진입합니다.' : '학생에게 공유하기 전에 교사가 8자 이상으로 먼저 설정해 주세요.'}</p>
                                 </div>
                                 <input 
                                     type="password" 
                                     value={teacherPinInput}
                                     onChange={(e) => setTeacherPinInput(e.target.value)}
-                                    placeholder="비밀번호 (기본: 1234)"
+                                    placeholder={teacherPin ? "교사 비밀번호" : "8자 이상 새 비밀번호"}
                                     className="w-full text-center text-2xl tracking-widest font-bold py-3 border border-slate-300 rounded-2xl focus:outline-none focus:ring-2 focus:ring-amber-500 mb-4"
-                                    maxLength={8}
+                                    maxLength={64}
                                     autoFocus
                                     onKeyDown={(e) => e.key === 'Enter' && verifyTeacherPin()}
                                 />
@@ -391,6 +434,12 @@
                             />
                         )
                     )}
+
+                    <footer className="mt-8 pb-3 text-center text-[11px] text-slate-400">
+                        <button onClick={() => setShowPrivacyModal(true)} className="underline hover:text-slate-600">개인정보처리방침</button>
+                        <span className="mx-2">·</span>
+                        <a href="privacy.html" className="underline hover:text-slate-600">새 창에서 보기</a>
+                    </footer>
                 </div>
             );
         }
