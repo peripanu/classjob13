@@ -812,6 +812,7 @@
         function StudentDashboard({ studentId, setLoggedInStudentId, students, roles, records, currentDate, handleCheckIn, studentPins, setStudentPins, showToast }) {
             const [checklistStatus, setChecklistStatus] = React.useState({});
             const [showChangePinModal, setShowChangePinModal] = React.useState(false);
+            const [showWeeklyModal, setShowWeeklyModal] = React.useState(false);
             const [newPinInput, setNewPinInput] = React.useState('');
 
             const currentStudent = students.find(s => s.id === studentId) || students[0];
@@ -863,6 +864,15 @@
                         </div>
 
                         <div className="flex items-center space-x-2">
+                            {currentStudent.canViewWeekly && (
+                                <button
+                                    onClick={() => setShowWeeklyModal(true)}
+                                    className="px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-600 font-bold text-xs rounded-xl border border-indigo-200 transition-all flex items-center space-x-1"
+                                >
+                                    <i className="fa-solid fa-calendar-week"></i>
+                                    <span className="hidden sm:inline">주간점검표</span>
+                                </button>
+                            )}
                             <button
                                 onClick={() => setShowChangePinModal(true)}
                                 className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold text-xs rounded-xl transition-all flex items-center space-x-1"
@@ -879,6 +889,18 @@
                             </button>
                         </div>
                     </div>
+
+                    {showWeeklyModal && (
+                        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                            <div className="bg-white rounded-3xl p-6 w-full max-w-3xl shadow-2xl max-h-[85vh] overflow-y-auto">
+                                <div className="flex items-center justify-between mb-4">
+                                    <h3 className="font-bold text-slate-800 text-sm">주간 점검표</h3>
+                                    <button onClick={() => setShowWeeklyModal(false)} className="text-slate-500 hover:text-slate-800" aria-label="주간점검표 닫기">✕</button>
+                                </div>
+                                <WeeklyCheckTable students={students} roles={roles} records={records} currentDate={currentDate} handleCheckIn={handleCheckIn} />
+                            </div>
+                        </div>
+                    )}
 
                     {showChangePinModal && (
                         <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
@@ -1068,10 +1090,112 @@
             );
         }
 
-        function TeacherView({ students, setStudents, roles, setRoles, records, handleCheckIn, currentDate, setCurrentDate, showToast, showAlert, teacherPin, setTeacherPin, hideTeacherBtn, setHideTeacherBtn, studentPins, setStudentPins, classCode }) {
-            const [activeTab, setActiveTab] = React.useState('status'); // 'status' | 'weekly' | 'manage_students' | 'manage_roles' | 'share' | 'settings'
+        // 주간 점검표. 교사 관리 모드와, 접근이 허용된 학생 화면 양쪽에서 재사용합니다.
+        function WeeklyCheckTable({ students, roles, records, currentDate, handleCheckIn }) {
             const [weekBaseDate, setWeekBaseDate] = React.useState(currentDate);
 
+            return (
+                <div className="space-y-6">
+                    <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between bg-slate-50 p-4 rounded-2xl border border-slate-100 gap-3">
+                        <div>
+                            <h3 className="font-bold text-slate-800 text-xs sm:text-sm">주간 1인 1역 수행 출석표 (월~금)</h3>
+                            <p className="text-[11px] text-slate-500">날짜별 버튼을 클릭하여 즉시 수행 여부를 체크할 수 있습니다.</p>
+                        </div>
+                        <div className="flex items-center space-x-2">
+                            <button
+                                onClick={() => setWeekBaseDate(prev => shiftWeek(prev, -7))}
+                                className="px-2.5 py-1.5 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100"
+                            >
+                                <i className="fa-solid fa-chevron-left mr-1"></i> 지난주
+                            </button>
+                            <button
+                                onClick={() => setWeekBaseDate(getTodayStr())}
+                                className="px-3 py-1.5 bg-amber-500 text-white rounded-xl text-xs font-bold hover:bg-amber-600"
+                            >
+                                이번주
+                            </button>
+                            <button
+                                onClick={() => setWeekBaseDate(prev => shiftWeek(prev, 7))}
+                                className="px-2.5 py-1.5 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100"
+                            >
+                                다음주 <i className="fa-solid fa-chevron-right ml-1"></i>
+                            </button>
+                        </div>
+                    </div>
+
+                    <div className="overflow-x-auto scrollbar-thin">
+                        <table className="w-full text-center text-xs">
+                            <thead>
+                                <tr className="bg-slate-50 text-slate-500 font-bold border-b border-slate-200">
+                                    <th className="p-3 text-left w-24">학생</th>
+                                    <th className="p-3 text-left">담당 역할</th>
+                                    {getWeekDays(weekBaseDate).map(w => (
+                                        <th key={w.dateStr} className={`p-3 min-w-[75px] ${w.dateStr === currentDate ? 'bg-amber-100 text-amber-900 rounded-t-xl' : ''}`}>
+                                            <div>{w.dayName}</div>
+                                            <div className="text-[10px] font-normal text-slate-400">{w.monthDay}</div>
+                                        </th>
+                                    ))}
+                                    <th className="p-3 w-20">주간 달성</th>
+                                </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-100">
+                                {students.map((st) => {
+                                    const r = roles.find(role => role.id === st.roleId);
+                                    const weekDays = getWeekDays(weekBaseDate);
+                                    let weekDoneCount = 0;
+
+                                    return (
+                                        <tr key={st.id} className="hover:bg-slate-50/60">
+                                            <td className="p-3 text-left font-bold text-slate-800">
+                                                <span className="mr-1.5"><Avatar emoji={st.avatar} className="text-base" /></span>
+                                                <span>{st.number}번</span>
+                                            </td>
+                                            <td className="p-3 text-left font-medium text-slate-600">
+                                                {r?.title || <span className="text-slate-300 italic">미배정</span>}
+                                            </td>
+                                            {weekDays.map(w => {
+                                                const isDone = !!(records[w.dateStr] && records[w.dateStr][st.id]);
+                                                if (isDone) weekDoneCount++;
+                                                const isToday = w.dateStr === currentDate;
+
+                                                return (
+                                                    <td key={w.dateStr} className={`p-2 ${isToday ? 'bg-amber-50/50' : ''}`}>
+                                                        <button
+                                                            onClick={() => handleCheckIn(st.id, !isDone, w.dateStr)}
+                                                            className={`w-9 h-9 rounded-xl font-black text-sm transition-all flex items-center justify-center mx-auto ${
+                                                                isDone
+                                                                ? 'bg-emerald-500 text-white shadow-xs hover:bg-emerald-600'
+                                                                : 'bg-slate-100 text-slate-300 hover:bg-slate-200 hover:text-slate-500'
+                                                            }`}
+                                                        >
+                                                            {isDone ? '💮' : '-'}
+                                                        </button>
+                                                    </td>
+                                                );
+                                            })}
+                                            <td className="p-3">
+                                                <span className={`font-black text-xs px-2 py-1 rounded-full ${
+                                                    weekDoneCount === 5
+                                                    ? 'bg-emerald-100 text-emerald-800'
+                                                    : (weekDoneCount > 0 ? 'bg-amber-100 text-amber-800' : 'bg-slate-100 text-slate-400')
+                                                }`}>
+                                                    {weekDoneCount}/5
+                                                </span>
+                                            </td>
+                                        </tr>
+                                    );
+                                })}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            );
+        }
+
+        function TeacherView({ students, setStudents, roles, setRoles, records, handleCheckIn, currentDate, setCurrentDate, showToast, showAlert, teacherPin, setTeacherPin, hideTeacherBtn, setHideTeacherBtn, studentPins, setStudentPins, classCode }) {
+            const [activeTab, setActiveTab] = React.useState('status'); // 'status' | 'weekly' | 'manage_students' | 'manage_roles' | 'share' | 'settings'
+
+            const [editingRole, setEditingRole] = React.useState(null); // { id, title, desc, checklistText }
             const [newRoleTitle, setNewRoleTitle] = React.useState('');
             const [newRoleDesc, setNewRoleDesc] = React.useState('');
             const [newRoleChecklist, setNewRoleChecklist] = React.useState('');
@@ -1128,6 +1252,28 @@
                 setRoles(roles.filter(r => r.id !== id));
                 setStudents(students.map(s => s.roleId === id ? { ...s, roleId: null } : s));
                 showToast('역할이 삭제되었습니다.');
+            };
+
+            const handleStartEditRole = (role) => {
+                setEditingRole({
+                    id: role.id,
+                    title: role.title,
+                    desc: role.desc,
+                    checklistText: (role.checklist || []).join('\n')
+                });
+            };
+
+            const handleSaveRoleEdit = (e) => {
+                e.preventDefault();
+                if (!editingRole.title.trim()) return;
+                setRoles(roles.map(r => r.id === editingRole.id ? {
+                    ...r,
+                    title: editingRole.title,
+                    desc: editingRole.desc,
+                    checklist: editingRole.checklistText.split('\n').filter(t => t.trim().length > 0)
+                } : r));
+                setEditingRole(null);
+                showToast('역할 정보가 수정되었습니다.');
             };
 
             const handleAddStudent = (e) => {
@@ -1300,100 +1446,7 @@
 
                     {/* Tab 2: Weekly View */}
                     {activeTab === 'weekly' && (
-                        <div className="space-y-6">
-                            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between bg-slate-50 p-4 rounded-2xl border border-slate-100 gap-3">
-                                <div>
-                                    <h3 className="font-bold text-slate-800 text-xs sm:text-sm">주간 1인 1역 수행 출석표 (월~금)</h3>
-                                    <p className="text-[11px] text-slate-500">날짜별 버튼을 클릭하여 즉시 수행 여부를 체크할 수 있습니다.</p>
-                                </div>
-                                <div className="flex items-center space-x-2">
-                                    <button 
-                                        onClick={() => setWeekBaseDate(prev => shiftWeek(prev, -7))}
-                                        className="px-2.5 py-1.5 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100"
-                                    >
-                                        <i className="fa-solid fa-chevron-left mr-1"></i> 지난주
-                                    </button>
-                                    <button 
-                                        onClick={() => setWeekBaseDate(getTodayStr())}
-                                        className="px-3 py-1.5 bg-amber-500 text-white rounded-xl text-xs font-bold hover:bg-amber-600"
-                                    >
-                                        이번주
-                                    </button>
-                                    <button 
-                                        onClick={() => setWeekBaseDate(prev => shiftWeek(prev, 7))}
-                                        className="px-2.5 py-1.5 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100"
-                                    >
-                                        다음주 <i className="fa-solid fa-chevron-right ml-1"></i>
-                                    </button>
-                                </div>
-                            </div>
-
-                            <div className="overflow-x-auto scrollbar-thin">
-                                <table className="w-full text-center text-xs">
-                                    <thead>
-                                        <tr className="bg-slate-50 text-slate-500 font-bold border-b border-slate-200">
-                                            <th className="p-3 text-left w-24">학생</th>
-                                            <th className="p-3 text-left">담당 역할</th>
-                                            {getWeekDays(weekBaseDate).map(w => (
-                                                <th key={w.dateStr} className={`p-3 min-w-[75px] ${w.dateStr === currentDate ? 'bg-amber-100 text-amber-900 rounded-t-xl' : ''}`}>
-                                                    <div>{w.dayName}</div>
-                                                    <div className="text-[10px] font-normal text-slate-400">{w.monthDay}</div>
-                                                </th>
-                                            ))}
-                                            <th className="p-3 w-20">주간 달성</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody className="divide-y divide-slate-100">
-                                        {students.map((st) => {
-                                            const r = roles.find(role => role.id === st.roleId);
-                                            const weekDays = getWeekDays(weekBaseDate);
-                                            let weekDoneCount = 0;
-
-                                            return (
-                                                <tr key={st.id} className="hover:bg-slate-50/60">
-                                                    <td className="p-3 text-left font-bold text-slate-800">
-                                                        <span className="mr-1.5"><Avatar emoji={st.avatar} className="text-base" /></span>
-                                                        <span>{st.number}번</span>
-                                                    </td>
-                                                    <td className="p-3 text-left font-medium text-slate-600">
-                                                        {r?.title || <span className="text-slate-300 italic">미배정</span>}
-                                                    </td>
-                                                    {weekDays.map(w => {
-                                                        const isDone = !!(records[w.dateStr] && records[w.dateStr][st.id]);
-                                                        if (isDone) weekDoneCount++;
-                                                        const isToday = w.dateStr === currentDate;
-
-                                                        return (
-                                                            <td key={w.dateStr} className={`p-2 ${isToday ? 'bg-amber-50/50' : ''}`}>
-                                                                <button
-                                                                    onClick={() => handleCheckIn(st.id, !isDone, w.dateStr)}
-                                                                    className={`w-9 h-9 rounded-xl font-black text-sm transition-all flex items-center justify-center mx-auto ${
-                                                                        isDone 
-                                                                        ? 'bg-emerald-500 text-white shadow-xs hover:bg-emerald-600' 
-                                                                        : 'bg-slate-100 text-slate-300 hover:bg-slate-200 hover:text-slate-500'
-                                                                    }`}
-                                                                >
-                                                                    {isDone ? '💮' : '-'}
-                                                                </button>
-                                                            </td>
-                                                        );
-                                                    })}
-                                                    <td className="p-3">
-                                                        <span className={`font-black text-xs px-2 py-1 rounded-full ${
-                                                            weekDoneCount === 5 
-                                                            ? 'bg-emerald-100 text-emerald-800' 
-                                                            : (weekDoneCount > 0 ? 'bg-amber-100 text-amber-800' : 'bg-slate-100 text-slate-400')
-                                                        }`}>
-                                                            {weekDoneCount}/5
-                                                        </span>
-                                                    </td>
-                                                </tr>
-                                            );
-                                        })}
-                                    </tbody>
-                                </table>
-                            </div>
-                        </div>
+                        <WeeklyCheckTable students={students} roles={roles} records={records} currentDate={currentDate} handleCheckIn={handleCheckIn} />
                     )}
 
                     {/* Tab 3: Student & Role Assignment */}
@@ -1464,6 +1517,26 @@
                                                     <span className="text-[11px] text-slate-400 px-2 py-1">암호 없음</span>
                                                 )}
 
+                                                <label
+                                                    className={`flex items-center space-x-1.5 px-2.5 py-1.5 rounded-xl border text-[11px] font-bold cursor-pointer transition-all ${
+                                                        st.canViewWeekly
+                                                        ? 'bg-indigo-50 border-indigo-200 text-indigo-700'
+                                                        : 'bg-white border-slate-200 text-slate-400'
+                                                    }`}
+                                                    title="이 학생이 자기 화면에서 주간점검표를 볼 수 있게 합니다"
+                                                >
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={!!st.canViewWeekly}
+                                                        onChange={(e) => {
+                                                            const checked = e.target.checked;
+                                                            setStudents(students.map(s => s.id === st.id ? { ...s, canViewWeekly: checked } : s));
+                                                        }}
+                                                        className="w-3.5 h-3.5 accent-indigo-600"
+                                                    />
+                                                    <span>주간점검표</span>
+                                                </label>
+
                                                 <button
                                                     onClick={() => handleDeleteStudent(st.id)}
                                                     className="text-slate-400 hover:text-rose-500 p-1.5 text-xs transition-colors"
@@ -1517,9 +1590,14 @@
                                         <div>
                                             <div className="flex items-center justify-between mb-1">
                                                 <h4 className="font-bold text-slate-800 text-xs">{r.title}</h4>
-                                                <button onClick={() => handleDeleteRole(r.id)} className="text-slate-300 hover:text-rose-500 text-xs">
-                                                    <i className="fa-solid fa-trash-can"></i>
-                                                </button>
+                                                <div className="flex items-center space-x-2">
+                                                    <button onClick={() => handleStartEditRole(r)} className="text-slate-300 hover:text-indigo-500 text-xs" title="역할 수정">
+                                                        <i className="fa-solid fa-pen"></i>
+                                                    </button>
+                                                    <button onClick={() => handleDeleteRole(r.id)} className="text-slate-300 hover:text-rose-500 text-xs" title="역할 삭제">
+                                                        <i className="fa-solid fa-trash-can"></i>
+                                                    </button>
+                                                </div>
                                             </div>
                                             <p className="text-[11px] text-slate-500 leading-relaxed">{r.desc}</p>
                                         </div>
@@ -1531,6 +1609,45 @@
                                     </div>
                                 ))}
                             </div>
+
+                            {editingRole && (
+                                <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                                    <div className="bg-white rounded-3xl p-6 w-full max-w-md shadow-2xl border border-slate-100">
+                                        <h3 className="font-bold text-slate-800 text-sm mb-4">1인 1역 항목 수정</h3>
+                                        <form onSubmit={handleSaveRoleEdit} className="space-y-3">
+                                            <input
+                                                type="text"
+                                                value={editingRole.title}
+                                                onChange={(e) => setEditingRole({ ...editingRole, title: e.target.value })}
+                                                placeholder="역할 이름"
+                                                className="w-full px-3 py-2 border border-slate-200 rounded-xl text-xs font-bold focus:outline-none"
+                                                autoFocus
+                                            />
+                                            <input
+                                                type="text"
+                                                value={editingRole.desc}
+                                                onChange={(e) => setEditingRole({ ...editingRole, desc: e.target.value })}
+                                                placeholder="역할 설명"
+                                                className="w-full px-3 py-2 border border-slate-200 rounded-xl text-xs focus:outline-none"
+                                            />
+                                            <textarea
+                                                value={editingRole.checklistText}
+                                                onChange={(e) => setEditingRole({ ...editingRole, checklistText: e.target.value })}
+                                                placeholder="세부 지침 (줄바꿈으로 구분)"
+                                                className="w-full px-3 py-2 border border-slate-200 rounded-xl text-xs focus:outline-none h-24"
+                                            ></textarea>
+                                            <div className="flex space-x-2 pt-1">
+                                                <button type="button" onClick={() => setEditingRole(null)} className="w-1/2 py-2.5 rounded-xl border border-slate-200 font-bold text-xs text-slate-600 hover:bg-slate-50">
+                                                    취소
+                                                </button>
+                                                <button type="submit" className="w-1/2 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs">
+                                                    저장
+                                                </button>
+                                            </div>
+                                        </form>
+                                    </div>
+                                </div>
+                            )}
                         </div>
                     )}
 
