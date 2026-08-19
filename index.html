@@ -135,11 +135,40 @@
             records: records
         });
 
+        // 여러 선생님이 같은 사이트를 함께 쓸 수 있도록, 학급마다 고유한 코드로 데이터를 분리합니다.
+        // URL에 ?class=코드가 없으면 이 배포에서 가장 먼저 쓰이던 학급('default')을 그대로 보여줘
+        // 기존에 공유된 링크가 깨지지 않도록 합니다.
+        const CLASS_PARAM = 'class';
+
+        const getClassCodeFromUrl = () => {
+            const params = new URLSearchParams(window.location.search);
+            return params.get(CLASS_PARAM) || 'default';
+        };
+
+        const generateClassCode = () => {
+            if (window.crypto && window.crypto.randomUUID) {
+                return window.crypto.randomUUID().replace(/-/g, '');
+            }
+            let code = '';
+            for (let i = 0; i < 32; i++) code += Math.floor(Math.random() * 16).toString(16);
+            return code;
+        };
+
+        const buildClassUrl = (code) => {
+            const base = window.location.origin + window.location.pathname;
+            return code === 'default' ? base : `${base}?${CLASS_PARAM}=${code}`;
+        };
+
         function App() {
             const [mode, setMode] = React.useState('student'); // 'student' | 'teacher'
             const [loggedInStudentId, setLoggedInStudentId] = React.useState(null);
             
-            // 이 학급의 모든 데이터는 Supabase(classroom_state 테이블, id=1 행)가 원본입니다.
+            // URL의 ?class=코드로 학급을 구분합니다. 페이지가 떠 있는 동안은 바뀌지 않습니다.
+            const classCode = React.useState(getClassCodeFromUrl)[0];
+            const [creatingClass, setCreatingClass] = React.useState(false);
+            const [showNewClassModal, setShowNewClassModal] = React.useState(false);
+
+            // 이 학급의 모든 데이터는 Supabase(classroom_state 테이블, code 컬럼으로 학급 구분)가 원본입니다.
             // 최초 로딩 전까지는 화면에만 쓰이는 기본값이며, 로딩 완료 후 서버 값으로 교체됩니다.
             const [teacherPin, setTeacherPin] = React.useState('');
             const [hideTeacherBtn, setHideTeacherBtn] = React.useState(false);
@@ -157,11 +186,29 @@
             const [alertModal, setAlertModal] = React.useState({ show: false, message: '' });
             const [showPrivacyModal, setShowPrivacyModal] = React.useState(false);
 
-            // 'loading' | 'ready' | 'error'
+            // 'loading' | 'ready' | 'error' | 'notfound'
             const [loadStatus, setLoadStatus] = React.useState('loading');
             // 서버와 마지막으로 동기화된 상태의 스냅샷(JSON). 이 값과 같으면 다시 저장/반영하지 않아,
             // 우리가 저장한 내용이 실시간 구독으로 되돌아와 무한 저장 루프가 되는 것을 막습니다.
             const lastSyncedRef = React.useRef(null);
+
+            const applyRow = (row) => {
+                const nextState = {
+                    teacherPin: row.teacher_pin || '',
+                    hideTeacherBtn: !!row.hide_teacher_btn,
+                    studentPins: row.student_pins || {},
+                    roles: (row.roles && row.roles.length) ? row.roles : DEFAULT_ROLES,
+                    students: (row.students && row.students.length) ? row.students : DEFAULT_STUDENTS,
+                    records: row.records || {}
+                };
+                setTeacherPin(nextState.teacherPin);
+                setHideTeacherBtn(nextState.hideTeacherBtn);
+                setStudentPins(nextState.studentPins);
+                setRoles(nextState.roles);
+                setStudents(nextState.students);
+                setRecords(nextState.records);
+                return nextState;
+            };
 
             React.useEffect(() => {
                 let cancelled = false;
@@ -169,38 +216,55 @@
                     const { data, error } = await supabaseClient
                         .from('classroom_state')
                         .select('*')
-                        .eq('id', 1)
-                        .single();
+                        .eq('code', classCode)
+                        .maybeSingle();
                     if (cancelled) return;
-                    if (error || !data) {
+                    if (error) {
                         setLoadStatus('error');
                         return;
                     }
-                    const nextState = {
-                        teacherPin: data.teacher_pin || '',
-                        hideTeacherBtn: !!data.hide_teacher_btn,
-                        studentPins: data.student_pins || {},
-                        roles: (data.roles && data.roles.length) ? data.roles : DEFAULT_ROLES,
-                        students: (data.students && data.students.length) ? data.students : DEFAULT_STUDENTS,
-                        records: data.records || {}
-                    };
-                    setTeacherPin(nextState.teacherPin);
-                    setHideTeacherBtn(nextState.hideTeacherBtn);
-                    setStudentPins(nextState.studentPins);
-                    setRoles(nextState.roles);
-                    setStudents(nextState.students);
-                    setRecords(nextState.records);
+
+                    let row = data;
+                    if (!row) {
+                        // 기존에 공유된 기본 링크(?class= 없음)와의 호환을 위해, 'default' 학급이
+                        // 아직 없다면(첫 배포 등) 자동으로 만들어 그 자리에서 바로 쓸 수 있게 합니다.
+                        if (classCode !== 'default') {
+                            setLoadStatus('notfound');
+                            return;
+                        }
+                        const { data: created, error: insertError } = await supabaseClient
+                            .from('classroom_state')
+                            .insert({ code: 'default' })
+                            .select('*')
+                            .single();
+                        if (cancelled) return;
+                        if (insertError || !created) {
+                            setLoadStatus('error');
+                            return;
+                        }
+                        row = created;
+                    }
+
+                    const nextState = applyRow(row);
                     lastSyncedRef.current = JSON.stringify(toRow(nextState));
                     setLoadStatus('ready');
+
+                    const params = new URLSearchParams(window.location.search);
+                    if (params.get('new') === '1') {
+                        params.delete('new');
+                        const qs = params.toString();
+                        window.history.replaceState(null, '', window.location.pathname + (qs ? `?${qs}` : ''));
+                        setShowNewClassModal(true);
+                    }
                 })();
                 return () => { cancelled = true; };
-            }, []);
+            }, [classCode]);
 
             // 다른 기기(교사/학생)의 변경 사항을 실시간으로 반영합니다.
             React.useEffect(() => {
                 const channel = supabaseClient
-                    .channel('classroom_state_changes')
-                    .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'classroom_state', filter: 'id=eq.1' }, (payload) => {
+                    .channel('classroom_state_changes_' + classCode)
+                    .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'classroom_state', filter: `code=eq.${classCode}` }, (payload) => {
                         const row = payload.new;
                         const rowStr = JSON.stringify({
                             teacher_pin: row.teacher_pin || '',
@@ -222,7 +286,7 @@
                     })
                     .subscribe();
                 return () => { supabaseClient.removeChannel(channel); };
-            }, []);
+            }, [classCode]);
 
             // 위 상태 중 하나라도 바뀌면(그리고 최초 로딩이 끝났다면) 잠시 후 서버에 저장합니다.
             React.useEffect(() => {
@@ -235,7 +299,7 @@
                     const { error } = await supabaseClient
                         .from('classroom_state')
                         .update({ ...payload, updated_at: new Date().toISOString() })
-                        .eq('id', 1);
+                        .eq('code', classCode);
                     if (!error) {
                         lastSyncedRef.current = payloadStr;
                     } else {
@@ -244,6 +308,23 @@
                 }, 400);
                 return () => clearTimeout(timer);
             }, [teacherPin, hideTeacherBtn, studentPins, roles, students, records, loadStatus]);
+
+            const handleCreateNewClass = async () => {
+                if (creatingClass) return;
+                setCreatingClass(true);
+                const newCode = generateClassCode();
+                const { error } = await supabaseClient
+                    .from('classroom_state')
+                    .insert({ code: newCode });
+                if (error) {
+                    showAlert('새 학급 생성에 실패했습니다. 잠시 후 다시 시도해주세요.');
+                    setCreatingClass(false);
+                    return;
+                }
+                const url = new URL(buildClassUrl(newCode));
+                url.searchParams.set('new', '1');
+                window.location.href = url.toString();
+            };
 
             const showToast = (msg) => {
                 setToastMessage(msg);
@@ -342,6 +423,22 @@
                 );
             }
 
+            if (loadStatus === 'notfound') {
+                return (
+                    <div className="min-h-screen flex flex-col items-center justify-center gap-4 text-center px-6">
+                        <i className="fa-solid fa-magnifying-glass text-3xl text-slate-400"></i>
+                        <p className="text-sm font-bold text-slate-700">이 학급 링크를 찾을 수 없습니다.<br />전달받은 주소가 정확한지 다시 확인해주세요.</p>
+                        <button
+                            onClick={handleCreateNewClass}
+                            disabled={creatingClass}
+                            className="px-5 py-2.5 bg-emerald-500 hover:bg-emerald-600 disabled:opacity-60 text-white font-bold text-xs rounded-2xl"
+                        >
+                            {creatingClass ? '만드는 중...' : '새 학급 만들기'}
+                        </button>
+                    </div>
+                );
+            }
+
             return (
                 <div className="max-w-4xl mx-auto px-4 py-6">
                     {/* Header */}
@@ -405,6 +502,44 @@
                                     className="w-full py-2.5 bg-slate-800 hover:bg-slate-900 text-white font-bold text-xs rounded-xl"
                                 >
                                     확인
+                                </button>
+                            </div>
+                        </div>
+                    )}
+
+                    {showNewClassModal && (
+                        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                            <div className="bg-white rounded-3xl p-6 w-full max-w-sm shadow-2xl text-center">
+                                <div className="w-12 h-12 bg-emerald-100 text-emerald-600 rounded-2xl flex items-center justify-center mx-auto mb-3 text-xl">
+                                    <i className="fa-solid fa-circle-check"></i>
+                                </div>
+                                <h3 className="text-sm font-bold text-slate-800 mb-2">새 학급이 만들어졌습니다!</h3>
+                                <p className="text-xs text-slate-500 mb-4 leading-relaxed">
+                                    아래 주소가 이 학급 전용 링크입니다. <b>꼭 즐겨찾기하거나 저장해두세요.</b> 이 링크를 잃어버리면 다시 접속할 방법이 없습니다.
+                                </p>
+                                <div className="bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-[11px] text-slate-600 break-all mb-4">
+                                    {window.location.href}
+                                </div>
+                                <button
+                                    onClick={() => {
+                                        const dummy = document.createElement('textarea');
+                                        document.body.appendChild(dummy);
+                                        dummy.value = window.location.href;
+                                        dummy.select();
+                                        document.execCommand('copy');
+                                        document.body.removeChild(dummy);
+                                        showToast('📋 학급 링크가 복사되었습니다!');
+                                    }}
+                                    className="w-full py-2.5 mb-2 bg-emerald-500 hover:bg-emerald-600 text-white font-bold text-xs rounded-xl flex items-center justify-center space-x-1.5"
+                                >
+                                    <i className="fa-solid fa-copy"></i>
+                                    <span>링크 복사하기</span>
+                                </button>
+                                <button
+                                    onClick={() => setShowNewClassModal(false)}
+                                    className="w-full py-2.5 rounded-xl border border-slate-200 font-bold text-xs text-slate-600 hover:bg-slate-50"
+                                >
+                                    확인했습니다
                                 </button>
                             </div>
                         </div>
@@ -490,6 +625,7 @@
                             setHideTeacherBtn={setHideTeacherBtn}
                             studentPins={studentPins}
                             setStudentPins={setStudentPins}
+                            classCode={classCode}
                         />
                     ) : (
                         loggedInStudentId === null ? (
@@ -523,6 +659,10 @@
                         <button onClick={() => setShowPrivacyModal(true)} className="underline hover:text-slate-600">개인정보처리방침</button>
                         <span className="mx-2">·</span>
                         <a href="privacy.html" className="underline hover:text-slate-600">새 창에서 보기</a>
+                        <span className="mx-2">·</span>
+                        <button onClick={handleCreateNewClass} disabled={creatingClass} className="underline hover:text-slate-600 disabled:opacity-60">
+                            {creatingClass ? '만드는 중...' : '다른 선생님이신가요? 내 학급 새로 만들기'}
+                        </button>
                     </footer>
                 </div>
             );
@@ -928,7 +1068,7 @@
             );
         }
 
-        function TeacherView({ students, setStudents, roles, setRoles, records, handleCheckIn, currentDate, setCurrentDate, showToast, showAlert, teacherPin, setTeacherPin, hideTeacherBtn, setHideTeacherBtn, studentPins, setStudentPins }) {
+        function TeacherView({ students, setStudents, roles, setRoles, records, handleCheckIn, currentDate, setCurrentDate, showToast, showAlert, teacherPin, setTeacherPin, hideTeacherBtn, setHideTeacherBtn, studentPins, setStudentPins, classCode }) {
             const [activeTab, setActiveTab] = React.useState('status'); // 'status' | 'weekly' | 'manage_students' | 'manage_roles' | 'share' | 'settings'
             const [weekBaseDate, setWeekBaseDate] = React.useState(currentDate);
 
@@ -947,7 +1087,9 @@
             };
 
             const copyMainUrl = () => {
-                const mainUrl = window.location.href.split('?')[0];
+                const mainUrl = classCode === 'default'
+                    ? window.location.origin + window.location.pathname
+                    : window.location.origin + window.location.pathname + '?class=' + classCode;
 
                 if (window.location.protocol === 'file:' || mainUrl.startsWith('blob:') || mainUrl.includes('about:')) {
                     showAlert('현재 화면은 미리보기(로컬) 환경이므로 타인이 접속 가능한 웹 주소가 없습니다. 아래 [온라인 웹 링크 만드는 방법] 안내를 참고해 주세요!');
