@@ -80,13 +80,19 @@
         const DEFAULT_STUDENTS = Array.from({ length: 15 }, (_, i) => {
             const num = i + 1;
             const avatars = ['🐶', '🐱', '🦊', '🐰', '🐼', '🐯', '🐨', '🦁', '🐥', '🦄', '🐻', '🐸', '🐹', '🤖', '🚀'];
-            const roleIds = ['r1', 'r2', 'r3', 'r4', 'r5'];
+            const defaultRoleIds = ['r1', 'r2', 'r3', 'r4', 'r5'];
             return {
                 id: num,
                 number: num,
-                roleId: roleIds[i % roleIds.length],
+                roleIds: [defaultRoleIds[i % defaultRoleIds.length]],
                 avatar: avatars[i % avatars.length]
             };
+        });
+
+        // 예전 데이터(학생 1명당 역할 하나, roleId)와 지금 데이터(역할 여러 개, roleIds)를 모두 지원합니다.
+        const normalizeStudent = (s) => ({
+            ...s,
+            roleIds: s.roleIds || (s.roleId ? [s.roleId] : [])
         });
 
         const getTodayStr = () => new Date().toISOString().split('T')[0];
@@ -198,7 +204,7 @@
                     hideTeacherBtn: !!row.hide_teacher_btn,
                     studentPins: row.student_pins || {},
                     roles: (row.roles && row.roles.length) ? row.roles : DEFAULT_ROLES,
-                    students: (row.students && row.students.length) ? row.students : DEFAULT_STUDENTS,
+                    students: ((row.students && row.students.length) ? row.students : DEFAULT_STUDENTS).map(normalizeStudent),
                     records: row.records || {}
                 };
                 setTeacherPin(nextState.teacherPin);
@@ -281,7 +287,7 @@
                         setHideTeacherBtn(parsed.hide_teacher_btn);
                         setStudentPins(parsed.student_pins);
                         setRoles(parsed.roles);
-                        setStudents(parsed.students);
+                        setStudents(parsed.students.map(normalizeStudent));
                         setRecords(parsed.records);
                     })
                     .subscribe();
@@ -816,11 +822,15 @@
             const [newPinInput, setNewPinInput] = React.useState('');
 
             const currentStudent = students.find(s => s.id === studentId) || students[0];
-            const currentRole = roles.find(r => r.id === currentStudent?.roleId) || {
+            const currentStudentRoles = roles.filter(r => (currentStudent?.roleIds || []).includes(r.id));
+            // 학생이 역할을 2개 이상 맡으면, 제목과 설명·세부지침을 하나로 합쳐서 보여줍니다.
+            const currentRole = currentStudentRoles.length > 0 ? {
+                title: currentStudentRoles.map(r => r.title).join(' + '),
+                desc: currentStudentRoles.map(r => r.desc).filter(Boolean).join(' / '),
+                checklist: currentStudentRoles.flatMap(r => r.checklist || [])
+            } : {
                 title: '미배정',
                 desc: '현재 지정된 역할이 없습니다.',
-                icon: 'fa-circle-question',
-                color: 'bg-slate-400',
                 checklist: []
             };
 
@@ -1140,7 +1150,7 @@
                             </thead>
                             <tbody className="divide-y divide-slate-100">
                                 {students.map((st) => {
-                                    const r = roles.find(role => role.id === st.roleId);
+                                    const studentRoles = roles.filter(role => (st.roleIds || []).includes(role.id));
                                     const weekDays = getWeekDays(weekBaseDate);
                                     let weekDoneCount = 0;
 
@@ -1151,7 +1161,7 @@
                                                 <span>{st.number}번</span>
                                             </td>
                                             <td className="p-3 text-left font-medium text-slate-600">
-                                                {r?.title || <span className="text-slate-300 italic">미배정</span>}
+                                                {studentRoles.length > 0 ? studentRoles.map(r => r.title).join(', ') : <span className="text-slate-300 italic">미배정</span>}
                                             </td>
                                             {weekDays.map(w => {
                                                 const isDone = !!(records[w.dateStr] && records[w.dateStr][st.id]);
@@ -1250,7 +1260,7 @@
 
             const handleDeleteRole = (id) => {
                 setRoles(roles.filter(r => r.id !== id));
-                setStudents(students.map(s => s.roleId === id ? { ...s, roleId: null } : s));
+                setStudents(students.map(s => ({ ...s, roleIds: (s.roleIds || []).filter(rid => rid !== id) })));
                 showToast('역할이 삭제되었습니다.');
             };
 
@@ -1290,7 +1300,7 @@
                 const newSt = {
                     id: num,
                     number: num,
-                    roleId: roles[0]?.id || null,
+                    roleIds: roles[0] ? [roles[0].id] : [],
                     avatar: avatars[Math.floor(Math.random() * avatars.length)]
                 };
                 setStudents([...students, newSt].sort((a,b) => a.number - b.number));
@@ -1311,10 +1321,10 @@
                 const shuffledRoles = [...roles].sort(() => Math.random() - 0.5);
                 const updatedStudents = students.map((s, idx) => ({
                     ...s,
-                    roleId: shuffledRoles[idx % shuffledRoles.length].id
+                    roleIds: [shuffledRoles[idx % shuffledRoles.length].id]
                 }));
                 setStudents(updatedStudents);
-                showToast('🎲 전체 역할이 랜덤 배정되었습니다!');
+                showToast('🎲 전체 역할이 랜덤 배정되었습니다! (역할이 1개로 초기화됩니다)');
             };
 
             const handleSavePin = (e) => {
@@ -1416,7 +1426,7 @@
 
                             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
                                 {students.map((st) => {
-                                    const r = roles.find(role => role.id === st.roleId);
+                                    const studentRoles = roles.filter(role => (st.roleIds || []).includes(role.id));
                                     const isDone = !!(records[currentDate] && records[currentDate][st.id]);
                                     return (
                                         <div key={st.id} className="p-4 rounded-2xl border border-slate-100 bg-slate-50 flex items-center justify-between">
@@ -1424,7 +1434,7 @@
                                                 <Avatar emoji={st.avatar} className="text-2xl" />
                                                 <div>
                                                     <span className="font-bold text-slate-800 text-xs block">{st.number}번 학생</span>
-                                                    <span className="text-[11px] text-emerald-600 font-medium">{r?.title || '미배정'}</span>
+                                                    <span className="text-[11px] text-emerald-600 font-medium">{studentRoles.length > 0 ? studentRoles.map(r => r.title).join(', ') : '미배정'}</span>
                                                 </div>
                                             </div>
                                             <button
@@ -1455,7 +1465,7 @@
                             <div className="flex flex-col sm:flex-row items-center justify-between gap-4 bg-slate-50 p-4 rounded-2xl border border-slate-100">
                                 <div>
                                     <h3 className="font-bold text-slate-800 text-xs sm:text-sm">학생 번호 및 역할 자동 배정</h3>
-                                    <p className="text-[11px] text-slate-500">학생 번호 관리 및 비밀번호 해제, 역할 변경이 가능합니다.</p>
+                                    <p className="text-[11px] text-slate-500">학생 번호 관리 및 비밀번호 해제가 가능합니다. 역할은 아래에서 원하는 만큼 클릭해서 여러 개 배정할 수 있습니다.</p>
                                 </div>
                                 <button
                                     onClick={handleRandomAssign}
@@ -1484,27 +1494,14 @@
                                 {students.map((st) => {
                                     const hasPin = !!studentPins[st.id];
                                     return (
-                                        <div key={st.id} className="p-3 bg-white border border-slate-200 rounded-2xl flex items-center justify-between flex-wrap gap-2">
+                                        <div key={st.id} className="p-3 bg-white border border-slate-200 rounded-2xl space-y-2.5">
+                                        <div className="flex items-center justify-between flex-wrap gap-2">
                                             <div className="flex items-center space-x-3">
                                                 <Avatar emoji={st.avatar} className="text-xl" />
                                                 <span className="font-black text-slate-800 text-xs">{st.number}번 학생</span>
                                             </div>
 
                                             <div className="flex items-center space-x-2">
-                                                <select
-                                                    value={st.roleId || ''}
-                                                    onChange={(e) => {
-                                                        const val = e.target.value;
-                                                        setStudents(students.map(s => s.id === st.id ? { ...s, roleId: val || null } : s));
-                                                    }}
-                                                    className="px-3 py-1.5 bg-slate-50 border border-slate-300 rounded-xl text-xs font-bold text-slate-700 focus:outline-none"
-                                                >
-                                                    <option value="">-- 미배정 --</option>
-                                                    {roles.map(r => (
-                                                        <option key={r.id} value={r.id}>{r.title}</option>
-                                                    ))}
-                                                </select>
-
                                                 {hasPin ? (
                                                     <button
                                                         onClick={() => handleResetStudentPin(st.id)}
@@ -1545,6 +1542,32 @@
                                                     <i className="fa-solid fa-trash-can"></i>
                                                 </button>
                                             </div>
+                                        </div>
+
+                                        <div className="flex flex-wrap gap-1.5 pl-1">
+                                            {roles.length === 0 ? (
+                                                <span className="text-[11px] text-slate-400">등록된 역할이 없습니다.</span>
+                                            ) : roles.map(r => {
+                                                const selected = (st.roleIds || []).includes(r.id);
+                                                return (
+                                                    <button
+                                                        key={r.id}
+                                                        onClick={() => {
+                                                            const current = st.roleIds || [];
+                                                            const next = selected ? current.filter(rid => rid !== r.id) : [...current, r.id];
+                                                            setStudents(students.map(s => s.id === st.id ? { ...s, roleIds: next } : s));
+                                                        }}
+                                                        className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border transition-all ${
+                                                            selected
+                                                            ? 'bg-emerald-500 text-white border-emerald-500'
+                                                            : 'bg-slate-50 text-slate-500 border-slate-200 hover:border-slate-300'
+                                                        }`}
+                                                    >
+                                                        {r.title}
+                                                    </button>
+                                                );
+                                            })}
+                                        </div>
                                         </div>
                                     );
                                 })}
